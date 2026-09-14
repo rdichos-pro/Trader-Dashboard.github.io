@@ -138,8 +138,19 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="flex items-center gap-2 pl-2">
           <div className="text-right whitespace-nowrap">
-            <span className="text-slate-500 uppercase text-[9px] block sm:inline sm:mr-1">Paper</span>
-            <span className="text-white font-bold text-xs sm:text-sm">{formatCurrency(paperBalance, 0)}</span>
+            {activeMode === 'PAPER_TRADING' ? (
+              <>
+                <span className="text-slate-500 uppercase text-[9px] block sm:inline sm:mr-1">Paper</span>
+                <span className="text-white font-bold text-xs sm:text-sm">{formatCurrency(paperBalance, 0)}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-slate-500 uppercase text-[9px] block sm:inline sm:mr-1">Live P&amp;L</span>
+                <span className={`font-bold text-xs sm:text-sm ${totalPositionsPnl.dollars >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {totalPositionsPnl.dollars >= 0 ? '+' : ''}{formatCurrency(totalPositionsPnl.dollars, 0)}
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

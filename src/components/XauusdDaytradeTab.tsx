@@ -574,6 +574,15 @@ export const XauusdDaytradeTab: React.FC<XauusdDaytradeTabProps> = ({
       : tradeAmount > 0 
       ? tradeAmount 
       : 10;
+
+    const orderCost = finalAmount * entry;
+    if (paperAccount && orderCost > paperAccount.balance) {
+      setQuickOrderNotice(
+        `Insufficient paper balance! This ${finalAmount}oz order requires ${formatCurrency(orderCost)} but available balance is ${formatCurrency(paperAccount.balance)}.`
+      );
+      setTimeout(() => setQuickOrderNotice(null), 6000);
+      return;
+    }
     
     if (onExecutePaperOrder) {
       onExecutePaperOrder('XAUUSD', direction, finalAmount, entry, riskPct, targetPct);

@@ -902,14 +902,17 @@ export default function App() {
         onClearCache={handleClearCacheAndResetData}
         isResettingCache={isResettingCache}
         paperBalance={paperAccount.balance}
-        totalPositionsPnl={{ 
+        totalPositionsPnl={tradingMode === 'LIVE' ? {
+          dollars: positions.reduce((acc, p) => acc + (p.unrealizedPnlDollars || 0), 0),
+          percent: 0,
+        } : {
           dollars: paperAccount.positions.reduce((acc, p) => {
             const quote = quotesMap.get(p.ticker);
             const currentPrice = quote ? quote.price : p.currentPrice;
             const pnl = p.type === 'LONG' ? (currentPrice - p.entryPrice) * p.quantity : (p.entryPrice - currentPrice) * p.quantity;
             return acc + pnl;
-          }, 0), 
-          percent: 0 
+          }, 0),
+          percent: 0
         }}
       />
 
@@ -988,9 +991,9 @@ export default function App() {
         {/* Positions & Exit Alerts Tab */}
         {activeTab === 'positions' && (
           <PositionsTab
-            positions={positions}
-            closedHistory={closedHistory}
-            onClosePosition={handleClosePosition}
+            positions={tradingMode === 'LIVE' ? positions : paperAccount.positions}
+            closedHistory={tradingMode === 'LIVE' ? closedHistory : paperAccount.history}
+            onClosePosition={tradingMode === 'LIVE' ? handleClosePosition : handleClosePaperPosition}
             onOpenNewPositionModal={() => {
               setModalInitialTicker(selectedSymbol);
               setModalInitialPrice(quotesMap.get(selectedSymbol)?.price || 100);
