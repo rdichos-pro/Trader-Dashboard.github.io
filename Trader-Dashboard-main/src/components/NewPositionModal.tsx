@@ -24,6 +24,7 @@ interface NewPositionModalProps {
   onSavePosition: (position: Omit<Position, 'id' | 'unrealizedPnlDollars' | 'unrealizedPnlPercent' | 'exitFlags'>) => void;
   initialTicker?: string;
   initialPrice?: number;
+  initialStopLossPrice?: number; // Strategy-derived stop (e.g. Ichimoku Kumo cloud bottom) from the signal that opened this modal
   universe: TickerQuote[];
 }
 
@@ -33,6 +34,7 @@ export const NewPositionModal: React.FC<NewPositionModalProps> = ({
   onSavePosition,
   initialTicker = 'NVDA',
   initialPrice = 128.50,
+  initialStopLossPrice,
   universe,
 }) => {
   const [ticker, setTicker] = useState(initialTicker);
@@ -77,21 +79,27 @@ export const NewPositionModal: React.FC<NewPositionModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     const sym = (initialTicker || 'NVDA').toUpperCase().trim();
+    const hasStrategyStop = initialStopLossPrice !== undefined && initialStopLossPrice > 0 && initialStopLossPrice < initialPrice;
+    const derivedStopPct = hasStrategyStop
+      ? Number((((initialPrice - initialStopLossPrice!) / initialPrice) * 100).toFixed(2))
+      : 5.0;
+
     setTicker(sym);
     setType('LONG');
     setEntryPrice(initialPrice);
     setQuantity(100);
     setEntryDate(new Date().toISOString().split('T')[0]);
-    setStopLossPct(5.0);
-    setCustomStopPrice(Number((initialPrice * (1 - 0.05)).toFixed(2)));
+    setStopLossType(hasStrategyStop ? 'DYNAMIC_KUMO' : 'FIXED');
+    setStopLossPct(derivedStopPct);
+    setCustomStopPrice(hasStrategyStop ? Number(initialStopLossPrice!.toFixed(2)) : Number((initialPrice * (1 - 0.05)).toFixed(2)));
     setTakeProfitPct(10.0);
     setCustomTakeProfitPrice(Number((initialPrice * (1 + 0.10)).toFixed(2)));
     setNotes('');
     setLiveQuote(null);
-    // Only re-run when the modal opens or a new ticker/price is requested —
+    // Only re-run when the modal opens or a new ticker/price/stop is requested —
     // not on every keystroke while the user is editing the form.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialTicker, initialPrice]);
+  }, [isOpen, initialTicker, initialPrice, initialStopLossPrice]);
 
   // Fetch live price whenever modal opens or ticker changes
   useEffect(() => {
@@ -395,6 +403,12 @@ export const NewPositionModal: React.FC<NewPositionModalProps> = ({
                 />
               </div>
             </div>
+            {stopLossType === 'DYNAMIC_KUMO' && initialStopLossPrice !== undefined && Math.abs(customStopPrice - initialStopLossPrice) < 0.02 && (
+              <p className="text-[10px] text-emerald-400/90 font-sans leading-snug flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" />
+                Pre-filled from the strategy's Ichimoku Kumo cloud bottom at signal time — adjust freely if you want a tighter or looser stop.
+              </p>
+            )}
           </div>
 
           {/* Section: Take-Profit Rules */}

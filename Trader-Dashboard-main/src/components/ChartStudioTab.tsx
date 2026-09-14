@@ -108,8 +108,10 @@ export const ChartStudioTab: React.FC<ChartStudioTabProps> = ({
 
   // Active Pane Target for ticker selection: 1 (Top/Left) or 2 (Bottom/Right)
   const [activePane, setActivePane] = useState<1 | 2>(1);
-  // When Link Both Panes is enabled, selecting a ticker updates both Pane 1 and Pane 2 simultaneously
-  const [linkPanes, setLinkPanes] = usePersistedState<boolean>('chart_studio_link_panes', false);
+  // When Link Both Panes is enabled, selecting a ticker updates both Pane 1 and Pane 2 simultaneously.
+  // Defaults to true: most people expect both panes to follow the same stock (e.g. two
+  // timeframes of the same chart) unless they deliberately split off a comparison symbol.
+  const [linkPanes, setLinkPanes] = usePersistedState<boolean>('chart_studio_link_panes', true);
 
   // Persistent strategy indicator settings across all stocks and sessions
   const [defaultStudies, setDefaultStudies] = usePersistedState<string[]>('tv_default_studies', DEFAULT_STRATEGY_STUDIES);
@@ -193,6 +195,19 @@ export const ChartStudioTab: React.FC<ChartStudioTabProps> = ({
     setSearchQuery('');
     setIsSearchFocused(false);
   };
+
+  // Keep Pane 2 in sync with the active symbol when linked, even when selectedSymbol
+  // changes from OUTSIDE this component (e.g. clicking a ticker/Trade in Entry Signals
+  // or Watchlist and navigating to Charts). handleSelectTicker above only fires for
+  // clicks made inside Chart Studio's own UI, so without this effect, Pane 2 would
+  // silently keep showing whatever symbol it last had — which is exactly what was
+  // being reported as "the 2nd pane doesn't sync with the chosen stock."
+  useEffect(() => {
+    if (linkPanes && selectedSymbol && selectedSymbol.toUpperCase() !== secondSymbol?.toUpperCase()) {
+      setSecondSymbol(selectedSymbol.toUpperCase());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSymbol, linkPanes]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();

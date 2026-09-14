@@ -50,7 +50,7 @@ interface EntrySignalsTabProps {
   maxAlertsPerSession: number;
   onUpdateMaxAlerts: (cap: number) => void;
   onSelectTicker: (symbol: string) => void;
-  onOpenNewPositionWithTicker: (symbol: string, currentPrice: number) => void;
+  onOpenNewPositionWithTicker: (symbol: string, currentPrice: number, stopLossPrice?: number) => void;
   onNavigateToTab: (tab: string) => void;
   universe?: TickerQuote[];
 }
@@ -690,7 +690,7 @@ export const EntrySignalsTab: React.FC<EntrySignalsTabProps> = ({
                               <Eye className="w-3 h-3 text-emerald-400" /> Chart
                             </button>
                             <button
-                              onClick={() => onOpenNewPositionWithTicker(quote.symbol, quote.price)}
+                              onClick={() => onOpenNewPositionWithTicker(quote.symbol, quote.price, evaluation.cloudBottom > 0 ? evaluation.cloudBottom : undefined)}
                               className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors flex items-center gap-1 ${
                                 isBuy
                                   ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
@@ -799,7 +799,7 @@ export const EntrySignalsTab: React.FC<EntrySignalsTabProps> = ({
                       </button>
 
                       <button
-                        onClick={() => onOpenNewPositionWithTicker(alert.ticker, alert.triggerPrice)}
+                        onClick={() => onOpenNewPositionWithTicker(alert.ticker, alert.triggerPrice, alert.confluenceStatus?.cloudBottom && alert.confluenceStatus.cloudBottom > 0 ? alert.confluenceStatus.cloudBottom : undefined)}
                         className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1 shadow-sm ${
                           isBullish ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-rose-600 hover:bg-rose-500 text-white'
                         }`}

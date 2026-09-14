@@ -1,7 +1,0 @@
-{
-  "name": "Retail Trader Dashboard",
-  "description": "A practical, rule-based personal trading dashboard for retail traders with real-time watchlist, stock scanner, customizable entry signals, positions P&L and exit alerts, candlestick charts, catalyst tagging, paper trading, and backtesting.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
-

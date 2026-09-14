@@ -56,6 +56,14 @@ export const DEFAULT_STRATEGY_STUDIES = [
   'CCI@tv-basicstudies',
 ];
 
+// Monochrome candle scheme applied to every chart in the app: light grey for bullish
+// (up) candles, a darker grey for bearish (down) candles — two Tailwind grey steps
+// apart (gray-300 -> gray-500) so they stay distinguishable without using red/green.
+export const CANDLE_COLORS = {
+  up: '#D1D5DB',   // Tailwind gray-300
+  down: '#6B7280', // Tailwind gray-500
+};
+
 export const TradingViewWidget: React.FC<TradingViewWidgetProps> = memo(({
   symbol,
   interval = '240',
@@ -97,7 +105,15 @@ export const TradingViewWidget: React.FC<TradingViewWidgetProps> = memo(({
       hotlist: false,
       calendar_events: false,
       studies: activeStudies,
-      support_host: 'https://www.tradingview.com'
+      support_host: 'https://www.tradingview.com',
+      overrides: {
+        'mainSeriesProperties.candleStyle.upColor': CANDLE_COLORS.up,
+        'mainSeriesProperties.candleStyle.downColor': CANDLE_COLORS.down,
+        'mainSeriesProperties.candleStyle.borderUpColor': CANDLE_COLORS.up,
+        'mainSeriesProperties.candleStyle.borderDownColor': CANDLE_COLORS.down,
+        'mainSeriesProperties.candleStyle.wickUpColor': CANDLE_COLORS.up,
+        'mainSeriesProperties.candleStyle.wickDownColor': CANDLE_COLORS.down,
+      },
     };
     return `https://www.tradingview-widget.com/embed-widget/advanced-chart/?locale=en#${encodeURIComponent(JSON.stringify(config))}`;
   }, [formattedSymbol, interval, theme, hideSideToolbar, hideTopToolbar, studies]);
