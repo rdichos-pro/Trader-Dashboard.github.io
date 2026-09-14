@@ -573,28 +573,38 @@ export function evaluateMultiTimeframeConfluence(
   const latest1h = barsEntry[barsEntry.length - 1];
   const latest1d = barsMacro[barsMacro.length - 1];
 
+  // Closed Candle Rule: every trading decision below is gated on the last fully completed
+  // bar in each series, never the one still forming right now — otherwise these pillars
+  // can flip on and off intraday as the live bar's own range keeps changing (repainting).
+  // latest1h/latest1d are kept only for currentPrice, the live reference used to check
+  // whether price has broken the confirmed setup bar's close.
+  const closedIdx1h = barsEntry.length >= 2 ? barsEntry.length - 2 : barsEntry.length - 1;
+  const closed1h = barsEntry[closedIdx1h];
+  const closedIdx1d = barsMacro.length >= 2 ? barsMacro.length - 2 : barsMacro.length - 1;
+  const closed1d = barsMacro[closedIdx1d];
+
   // 1. 1D Daily Timeframe: Tenkan-Kijun Crossover Evaluation
-  const dailyTkCross = latest1d.tenkan >= latest1d.kijun;
-  const dailyTkDeathCross = latest1d.tenkan <= latest1d.kijun;
+  const dailyTkCross = closed1d.tenkan >= closed1d.kijun;
+  const dailyTkDeathCross = closed1d.tenkan <= closed1d.kijun;
 
   // Calculate days since last 1D crossover occurred
   let dailyTkBarsAgo = 0;
-  for (let d = barsMacro.length - 1; d >= 1; d--) {
+  for (let d = closedIdx1d; d >= 1; d--) {
     const curr = barsMacro[d];
     const prev = barsMacro[d - 1];
     if (dailyTkCross && curr.tenkan >= curr.kijun && prev.tenkan < prev.kijun) {
-      dailyTkBarsAgo = barsMacro.length - 1 - d;
+      dailyTkBarsAgo = closedIdx1d - d;
       break;
     }
     if (dailyTkDeathCross && curr.tenkan <= curr.kijun && prev.tenkan > prev.kijun) {
-      dailyTkBarsAgo = barsMacro.length - 1 - d;
+      dailyTkBarsAgo = closedIdx1d - d;
       break;
     }
   }
 
   // 2. 1HR Entry Timeframe: Pure Ichimoku Rules Evaluation
-  const p1h = latest1h.passedFiltersCount; // 0 to 6
-  const p1h_sell = latest1h.passedSellFiltersCount; // 0 to 6
+  const p1h = closed1h.passedFiltersCount; // 0 to 6
+  const p1h_sell = closed1h.passedSellFiltersCount; // 0 to 6
 
   // 3. Combined Confluence: 1D TK Crossover (1 Pillar) + 1HR Ichimoku Rules (6 Pillars) = 7 Pillars Total
   const total = (dailyTkCross ? 1 : 0) + p1h; // 0 to 7 Buy
@@ -604,9 +614,9 @@ export function evaluateMultiTimeframeConfluence(
   const dualBearish = dailyTkDeathCross && p1h_sell === 6;
 
   // Find the last completed 1HR bar that met full buy confluence (6/6 rules)
-  let lastConfluenceBarClose = latest1h.close;
+  let lastConfluenceBarClose = closed1h.close;
   let hasConfluenceSetup = false;
-  for (let idx = barsEntry.length - 1; idx >= 0; idx--) {
+  for (let idx = closedIdx1h; idx >= 0; idx--) {
     if (barsEntry[idx].passedFiltersCount >= 6) {
       lastConfluenceBarClose = barsEntry[idx].close;
       hasConfluenceSetup = true;
@@ -615,9 +625,9 @@ export function evaluateMultiTimeframeConfluence(
   }
 
   // Find the last completed 1HR bar that met full sell confluence (6/6 rules)
-  let lastSellConfluenceBarClose = latest1h.close;
+  let lastSellConfluenceBarClose = closed1h.close;
   let hasSellConfluenceSetup = false;
-  for (let idx = barsEntry.length - 1; idx >= 0; idx--) {
+  for (let idx = closedIdx1h; idx >= 0; idx--) {
     if (barsEntry[idx].passedSellFiltersCount >= 6) {
       lastSellConfluenceBarClose = barsEntry[idx].close;
       hasSellConfluenceSetup = true;
@@ -651,7 +661,7 @@ export function evaluateMultiTimeframeConfluence(
   let reversalCrossBarTime = '';
   let reversalCrossBarClose = 0;
 
-  for (let idx = barsEntry.length - 1; idx >= 1; idx--) {
+  for (let idx = closedIdx1h; idx >= 1; idx--) {
     const bCurrent = barsEntry[idx];
     const bPrior = barsEntry[idx - 1];
 
@@ -666,7 +676,7 @@ export function evaluateMultiTimeframeConfluence(
     }
   }
 
-  if (latest1h.tenkan >= latest1h.kijun) {
+  if (closed1h.tenkan >= closed1h.kijun) {
     hasReversalCross = false;
   }
 
@@ -685,7 +695,7 @@ export function evaluateMultiTimeframeConfluence(
   let regimeLabel = '🟡 CONSOLIDATION / CHOP ZONE';
   let regimeReason = '';
 
-  const is1hInCloud = latest1h.isInsideCloud;
+  const is1hInCloud = closed1h.isInsideCloud;
 
   if (dailyTkCross && p1h >= 5 && !is1hInCloud) {
     marketRegime = 'BUY';
@@ -707,7 +717,7 @@ export function evaluateMultiTimeframeConfluence(
     marketRegime = 'CONSOLIDATION';
     regimeLabel = '🟡 CONSOLIDATION / CHOP ZONE';
     regimeReason = is1hInCloud 
-      ? `Price ($${currentPrice.toFixed(2)}) is inside the ${entryTfLabel} Kumo Cloud ($${latest1h.cloudBottom.toFixed(2)} - $${latest1h.cloudTop.toFixed(2)}). Range-bound chop.` 
+      ? `Price ($${currentPrice.toFixed(2)}) is inside the ${entryTfLabel} Kumo Cloud ($${closed1h.cloudBottom.toFixed(2)} - $${closed1h.cloudTop.toFixed(2)}). Range-bound chop.` 
       : `Indecisive market momentum (Buy: ${total}/7, Sell: ${totalSell}/7). Stand aside and preserve capital.`;
   }
 
@@ -746,7 +756,7 @@ export function evaluateMultiTimeframeConfluence(
   } else if (dailyTkDeathCross && p1h_sell < 4) {
     status = '30M_SELL_COILING';
     guidance = `⏳ ${macroTfLabel} TK BEARISH DEATH CROSS ACTIVE: Macro trend is bearish. ${entryTfLabel} chart is currently in a bounce (${p1h_sell}/6 sell rules). Await ${entryTfLabel} Tenkan < Kijun cross and breakdown to short.`;
-  } else if (latest1h.isFullBearish) {
+  } else if (closed1h.isFullBearish) {
     status = 'BEARISH_LEAD';
     guidance = `📉 ${entryTfLabel} EXIT TRIGGER: Structure lost below Kijun support. Protect profits on active positions.`;
   } else {
@@ -772,21 +782,21 @@ export function evaluateMultiTimeframeConfluence(
     dailyTkCross,
     dailyTkDeathCross,
     dailyTkBarsAgo,
-    dailyTenkan: latest1d.tenkan,
-    dailyKijun: latest1d.kijun,
-    dailyCloudTop: latest1d.cloudTop,
-    dailyCloudBottom: latest1d.cloudBottom,
-    bar1d: latest1d,
-    bar1h: latest1h,
+    dailyTenkan: closed1d.tenkan,
+    dailyKijun: closed1d.kijun,
+    dailyCloudTop: closed1d.cloudTop,
+    dailyCloudBottom: closed1d.cloudBottom,
+    bar1d: closed1d,
+    bar1h: closed1h,
     ichimoku1hRulesPassed: p1h,
     ichimoku1hSellRulesPassed: p1h_sell,
-    bar5m: latest1h, // Backwards compatible alias
+    bar5m: closed1h, // Backwards compatible alias
     filters5mPassed: p1h,
     filters5mSellPassed: p1h_sell,
-    bar15m: latest1d,
+    bar15m: closed1d,
     filters15mPassed: dailyTkCross ? 1 : 0,
     filters15mSellPassed: dailyTkDeathCross ? 1 : 0,
-    barTrend: latest1d,
+    barTrend: closed1d,
     filtersTrendPassed: dailyTkCross ? 1 : 0,
     filtersTrendSellPassed: dailyTkDeathCross ? 1 : 0,
     totalPillarsPassed: total,
@@ -1215,8 +1225,13 @@ export function runSingleStrategyBacktest(
     while (pMacroIdx + 1 < barsMacro.length && barsMacro[pMacroIdx + 1].timestamp <= bEntry.timestamp) {
       pMacroIdx++;
     }
-    const bMacro = barsMacro[pMacroIdx];
-    const prevMacro = pMacroIdx > 0 ? barsMacro[pMacroIdx - 1] : undefined;
+    // pMacroIdx now points to the macro bar that STARTED at/before bEntry's timestamp —
+    // but that bar may still be in progress (not yet closed) at that exact moment. Using
+    // it directly is lookahead bias: it lets the backtest "see" that bar's full range
+    // (e.g. a full day's Tenkan/Kijun) before it would actually be known live. Step back
+    // one bar to the last one that's genuinely complete.
+    const bMacro = pMacroIdx > 0 ? barsMacro[pMacroIdx - 1] : barsMacro[0];
+    const prevMacro = pMacroIdx > 1 ? barsMacro[pMacroIdx - 2] : undefined;
 
     const { shouldEnter, shouldExit, entryReason: eReason, exitReason: xReason } = strat.checkSignal(
       bEntry, prevEntry, bMacro, prevMacro

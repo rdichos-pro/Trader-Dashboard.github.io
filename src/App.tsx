@@ -870,6 +870,22 @@ export default function App() {
     });
   };
 
+  // Handler: Reset only the realized P&L log (closed trade history + win/loss record),
+  // leaving open positions and current balance untouched — for "start my log over" without
+  // wiping an in-progress account.
+  const handleResetLiveRealizedPnl = () => {
+    setClosedHistory([]);
+  };
+
+  const handleResetPaperRealizedPnl = () => {
+    setPaperAccount(prev => ({
+      ...prev,
+      history: [],
+      winCount: 0,
+      lossCount: 0,
+    }));
+  };
+
   // Handler: Add Custom Catalyst News
   const handleAddCustomNews = (item: NewsItem) => {
     setNews([item, ...news]);
@@ -994,6 +1010,7 @@ export default function App() {
             positions={tradingMode === 'LIVE' ? positions : paperAccount.positions}
             closedHistory={tradingMode === 'LIVE' ? closedHistory : paperAccount.history}
             onClosePosition={tradingMode === 'LIVE' ? handleClosePosition : handleClosePaperPosition}
+            onResetRealizedPnl={tradingMode === 'LIVE' ? handleResetLiveRealizedPnl : handleResetPaperRealizedPnl}
             onOpenNewPositionModal={() => {
               setModalInitialTicker(selectedSymbol);
               setModalInitialPrice(quotesMap.get(selectedSymbol)?.price || 100);

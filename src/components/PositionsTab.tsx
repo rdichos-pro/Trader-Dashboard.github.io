@@ -18,6 +18,7 @@ import {
   History, 
   Info, 
   Percent, 
+  RotateCcw, 
   Plus, 
   RefreshCw, 
   ShieldAlert, 
@@ -41,6 +42,7 @@ interface PositionsTabProps {
   positions: Position[];
   closedHistory: Position[];
   onClosePosition: (id: string, exitPrice: number, notes?: string) => void;
+  onResetRealizedPnl?: () => void;
   onOpenNewPositionModal: () => void;
   onSelectTicker: (symbol: string) => void;
   onNavigateToTab: (tab: string) => void;
@@ -56,6 +58,7 @@ export const PositionsTab: React.FC<PositionsTabProps> = ({
   positions,
   closedHistory,
   onClosePosition,
+  onResetRealizedPnl,
   onOpenNewPositionModal,
   onSelectTicker,
   onNavigateToTab,
@@ -207,7 +210,23 @@ export const PositionsTab: React.FC<PositionsTabProps> = ({
         <div className="bg-[#161B22] p-4 rounded-lg border border-slate-800 shadow-sm">
           <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
             <span className="font-semibold uppercase tracking-wider">Realized P&L</span>
-            <History className="w-4 h-4 text-cyan-400" />
+            <div className="flex items-center gap-1.5">
+              {onResetRealizedPnl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Reset your realized P&L log? This clears your closed-trade history and win/loss record. Open positions and balance are not affected. This cannot be undone.')) {
+                      onResetRealizedPnl();
+                    }
+                  }}
+                  title="Reset realized P&L log (clears closed trade history, keeps open positions & balance)"
+                  className="text-slate-500 hover:text-rose-400 transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <History className="w-4 h-4 text-cyan-400" />
+            </div>
           </div>
           <div className={`text-xl font-bold font-mono ${totalRealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
             {totalRealizedPnl >= 0 ? '+' : ''}{formatCurrency(totalRealizedPnl)}
@@ -765,6 +784,13 @@ export const PositionsTab: React.FC<PositionsTabProps> = ({
                       <tr key={pos.id} className="hover:bg-slate-800/40 transition-colors">
                         <td className="py-3 px-4">
                           <span className="font-bold text-white text-base">{pos.ticker}</span>
+                          <span className={`ml-2 text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                            pos.ticker.toUpperCase() === 'XAUUSD'
+                              ? 'bg-amber-950/60 text-amber-300 border-amber-800/60'
+                              : 'bg-slate-800/60 text-slate-400 border-slate-700'
+                          }`}>
+                            {pos.ticker.toUpperCase() === 'XAUUSD' ? '5M/30M' : '1HR/1D'}
+                          </span>
                         </td>
                         <td className="py-3 px-3 text-slate-300 text-xs">
                           {formatDate(pos.entryDate)} @ {formatCurrency(pos.entryPrice)}

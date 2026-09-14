@@ -495,6 +495,16 @@ export const XauusdDaytradeTab: React.FC<XauusdDaytradeTabProps> = ({
     return paperAccount.positions.filter(p => p.ticker.toUpperCase() === 'XAUUSD');
   }, [paperAccount?.positions]);
 
+  // Closed gold trade log — kept separate from the stock Trade Journal (Positions & Exits)
+  // since XAUUSD trades reference a different timeframe pair (5M entry / 30M trend) than
+  // stocks (1HR entry / 1D macro), and mixing them in one list obscures that distinction.
+  const closedGoldTrades = useMemo(() => {
+    if (!paperAccount?.history) return [];
+    return paperAccount.history
+      .filter(p => p.ticker.toUpperCase() === 'XAUUSD')
+      .sort((a, b) => new Date(b.entryDate).getTime() - new Date(a.entryDate).getTime());
+  }, [paperAccount?.history]);
+
   // Handle selecting/clicking a trade (from historical backtest or running paper positions)
   const handleSelectTrade = (trade: BacktestTradeRecord | Position | any) => {
     const isRunning = Boolean(
@@ -1662,6 +1672,58 @@ export const XauusdDaytradeTab: React.FC<XauusdDaytradeTabProps> = ({
                               </span>
                               <span className="text-[10px] text-slate-400 font-mono">
                                 Click to reflect
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Closed Gold Trade Log — separate from the stock Trade Journal in Positions & Exits */}
+                {closedGoldTrades.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-mono text-slate-300 font-bold">
+                        <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                        <span>XAUUSD Closed Trade Log ({closedGoldTrades.length})</span>
+                      </div>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
+                        5M Entry / 30M Trend
+                      </span>
+                    </div>
+
+                    <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
+                      {closedGoldTrades.map(pos => {
+                        const isWin = (pos.realizedPnlDollars ?? 0) >= 0;
+                        return (
+                          <div
+                            key={pos.id}
+                            className="p-2.5 rounded-lg border border-slate-800 bg-[#0D1117] flex items-center justify-between gap-2"
+                          >
+                            <div>
+                              <div className="flex items-center gap-1.5 font-mono text-xs">
+                                <span className={`px-1.5 py-0.5 rounded font-black text-[10px] ${
+                                  pos.type === 'LONG' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
+                                }`}>
+                                  {pos.type}
+                                </span>
+                                <span className="font-bold text-white">XAUUSD</span>
+                                <span className="text-[10px] text-slate-500">{pos.quantity} Oz</span>
+                              </div>
+                              <div className="text-[11px] font-mono text-slate-400 mt-1">
+                                Entry: <strong className="text-white">${pos.entryPrice.toFixed(2)}</strong>
+                                {pos.closePrice != null && <> {'->'} Exit: <strong className="text-white">${pos.closePrice.toFixed(2)}</strong></>}
+                                <span className="text-slate-600 ml-1.5">{pos.closeDate ? new Date(pos.closeDate).toLocaleDateString() : pos.entryDate}</span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className={`text-xs font-black font-mono block ${isWin ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {isWin ? '+' : ''}{formatCurrency(pos.realizedPnlDollars ?? 0)}
+                              </span>
+                              <span className={`text-[10px] font-mono ${isWin ? 'text-emerald-500/80' : 'text-rose-500/80'}`}>
+                                {(pos.realizedPnlPercent ?? 0).toFixed(2)}%
                               </span>
                             </div>
                           </div>

@@ -274,8 +274,13 @@ export function evaluateConfluenceDetails(
   
   let entryDailyTkCross = true;
   if (macroList.length >= 2) {
-    const lastDaily = macroList[macroList.length - 1];
-    entryDailyTkCross = (lastDaily.tenkan ?? lastDaily.close) >= (lastDaily.kijun ?? lastDaily.close);
+    // Use the last CLOSED daily bar (length-2), not the still-forming "today" bar
+    // (length-1) — this mirrors the Closed Candle Rule already enforced on the 1HR
+    // series above. Reading today's in-progress daily candle here would let this
+    // pillar flip on and off intraday as today's bar keeps forming, which is exactly
+    // the repainting behavior this whole function is designed to avoid.
+    const lastClosedDaily = macroList[macroList.length - 2];
+    entryDailyTkCross = (lastClosedDaily.tenkan ?? lastClosedDaily.close) >= (lastClosedDaily.kijun ?? lastClosedDaily.close);
   }
 
   // 2. 1HR Ichimoku 6 Strict Rules (No Stoch, No CCI)
