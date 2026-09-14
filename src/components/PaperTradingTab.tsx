@@ -60,7 +60,7 @@ export const PaperTradingTab: React.FC<PaperTradingTabProps> = ({
   const totalUnrealized = account.positions.reduce((sum, p) => sum + p.unrealizedPnlDollars, 0);
   const totalEquity = account.balance + totalPositionsValue;
   const totalGainFromStart = totalEquity - account.initialBalance;
-  const totalGainPct = (totalGainFromStart / account.initialBalance) * 100;
+  const totalGainPct = account.initialBalance > 0 ? (totalGainFromStart / account.initialBalance) * 100 : 0;
 
   const handleExecute = (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,11 +153,11 @@ export const PaperTradingTab: React.FC<PaperTradingTabProps> = ({
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">Simulated Order Desk</h3>
             </div>
             <button
-              onClick={() => onResetPaperAccount(100000)}
+              onClick={() => onResetPaperAccount(0)}
               className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1"
-              title="Reset balance to $100k"
+              title="Reset balance to $0"
             >
-              <RotateCcw className="w-3 h-3" /> Reset $100K
+              <RotateCcw className="w-3 h-3" /> Reset to $0
             </button>
           </div>
 

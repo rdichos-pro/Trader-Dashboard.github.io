@@ -194,8 +194,8 @@ const INITIAL_CLOSED_HISTORY: Position[] = [
 ];
 
 const INITIAL_PAPER_ACCOUNT: PaperAccount = {
-  balance: 85240,
-  initialBalance: 100000,
+  balance: 0,
+  initialBalance: 0,
   positions: [
     {
       id: 'paper-pos-1',

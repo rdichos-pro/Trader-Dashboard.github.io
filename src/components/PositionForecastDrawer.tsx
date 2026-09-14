@@ -76,7 +76,7 @@ export const PositionForecastDrawer: React.FC<PositionForecastDrawerProps> = ({
     defaultTarget1 || (currentPrice ? currentPrice * 1.04 : 104)
   );
   const [tradeAmount, setTradeAmount] = useState<number>(10);
-  const [accountSize, setAccountSize] = useState<number>(10000);
+  const [accountSize, setAccountSize] = useState<number>(0);
   const [riskPercent, setRiskPercent] = useState<number>(1.0); // 1% risk per trade
   const [showOnChartBox, setShowOnChartBox] = useState<boolean>(true);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
