@@ -823,3 +823,98 @@ export const INITIAL_NEWS_FEED: NewsItem[] = [
     isTaggedCatalyst: true,
   },
 ];
+
+/**
+ * Same price-simulation algorithm as generateHistoricalCandles, but with a caller-supplied
+ * bar count instead of the fixed ~100-trading-day (intraday) / ~1.2yr (daily) defaults.
+ * Used by the walk-forward backtester to get a full year+ of 1HR history without changing
+ * the bar counts every other live view relies on from generateHistoricalCandles().
+ */
+export function generateExtendedHistoricalCandles(
+  symbol: string,
+  resolution: 'D' | '240' | '60' | '30' | '15' | '5' | '1',
+  totalBars: number,
+  profile?: StockProfile
+): Candle[] {
+  const stock = profile || STOCK_UNIVERSE.find(s => s.symbol === symbol) || {
+    symbol,
+    name: symbol,
+    basePrice: symbol.toUpperCase() === 'XAUUSD' || symbol.toUpperCase() === 'GOLD' ? 2515.40 : 100,
+    avgVolume: 10000000,
+    marketCap: 10000000000,
+    floatShares: 100000000,
+    sector: 'Commodities',
+  };
+
+  const candles: Candle[] = [];
+  const is1m = resolution === '1';
+  const is5m = resolution === '5';
+  const is15m = resolution === '15';
+  const is30m = resolution === '30';
+  const is60m = resolution === '60';
+  const is4H = resolution === '240';
+  const isIntraday = is1m || is5m || is15m || is30m || is60m || is4H;
+
+  const now = new Date();
+  let currentPrice = stock.basePrice * (is1m || is5m || is15m || is30m ? 0.94 : is4H ? 0.85 : 0.78);
+  let seed = symbol.split('').reduce((acc, c) => acc + c.charCodeAt(0), 100);
+  let momentum = 0;
+
+  const stepMs = is1m ? 60000 : is5m ? 300000 : is15m ? 900000 : is30m ? 1800000 : is60m ? 3600000 : is4H ? 14400000 : 86400000;
+
+  for (let i = totalBars; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * stepMs);
+    const utcDay = d.getUTCDay();
+    const utcHour = d.getUTCHours();
+    const isWeekend = utcDay === 6 || (utcDay === 0 && utcHour < 21);
+    if (isWeekend) continue;
+
+    seed += 1;
+    const r1 = seededRandom(seed);
+    const r2 = seededRandom(seed + 1);
+    const r3 = seededRandom(seed + 2);
+    const r4 = seededRandom(seed + 3);
+
+    const targetPrice = stock.basePrice;
+    const pullRate = is1m ? 0.0003 : is5m ? 0.0006 : is15m ? 0.0012 : is30m ? 0.002 : is60m ? 0.0035 : is4H ? 0.008 : 0.015;
+    const pull = (targetPrice - currentPrice) * pullRate;
+
+    const noise = (r1 - 0.488);
+    const momentumPersistence = is1m ? 0.78 : is5m ? 0.82 : is15m ? 0.85 : is60m ? 0.88 : is4H ? 0.90 : 0.85;
+    momentum = momentum * momentumPersistence + noise * (1 - momentumPersistence);
+
+    const volatility = is1m ? 0.0009 : is5m ? 0.0016 : is15m ? 0.0026 : is60m ? 0.0045 : is4H ? 0.009 : 0.018;
+    const change = (momentum * 2.2 + noise * 0.4) * volatility * currentPrice + pull;
+
+    const open = currentPrice;
+    const close = Math.max(1, currentPrice + change);
+    const spreadMultiplier = is1m ? 0.0008 : is5m || is15m ? 0.0015 : is4H ? 0.008 : 0.015;
+    const high = Math.max(open, close) + r2 * (currentPrice * spreadMultiplier);
+    const low = Math.min(open, close) - r3 * (currentPrice * spreadMultiplier);
+
+    const isSpike = r4 > 0.88;
+    const volMultiplier = isSpike ? (1.8 + r1 * 2.2) : (0.7 + r1 * 0.6);
+    const baseVol = is1m ? Math.floor(stock.avgVolume / 60) : is5m || is15m ? Math.floor(stock.avgVolume / 20) : is4H ? Math.floor(stock.avgVolume / 2) : stock.avgVolume;
+    const volume = Math.floor(baseVol * volMultiplier);
+
+    candles.push({
+      time: isIntraday ? d.toISOString().slice(0, 16).replace('T', ' ') : d.toISOString().split('T')[0],
+      open: Number(open.toFixed(2)),
+      high: Number(high.toFixed(2)),
+      low: Number(low.toFixed(2)),
+      close: Number(close.toFixed(2)),
+      volume,
+    });
+
+    currentPrice = close;
+  }
+
+  if (candles.length > 0) {
+    const last = candles[candles.length - 1];
+    last.close = stock.basePrice;
+    last.high = Math.max(last.high, stock.basePrice + (is4H ? 0.8 : 1.2));
+    last.low = Math.min(last.low, stock.basePrice - (is4H ? 0.8 : 1.2));
+  }
+
+  return candles;
+}

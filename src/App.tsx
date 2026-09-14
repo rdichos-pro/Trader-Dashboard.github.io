@@ -293,6 +293,7 @@ export default function App() {
   const [isResettingCache, setIsResettingCache] = useState(false);
   const [modalInitialTicker, setModalInitialTicker] = useState('NVDA');
   const [modalInitialPrice, setModalInitialPrice] = useState(128.50);
+  const [modalInitialStopPrice, setModalInitialStopPrice] = useState<number | undefined>(undefined);
   const [toastAlerts, setToastAlerts] = useState<SignalAlert[]>([]);
   const [isScanningWatchlist, setIsScanningWatchlist] = useState(false);
   const [lastScanTimestamp, setLastScanTimestamp] = useState<number>(Date.now());
@@ -680,9 +681,10 @@ export default function App() {
   };
 
   // Handler: Open Trade Dialog with Pre-filled Stock
-  const handleOpenNewPositionWithTicker = (symbol: string, currentPrice: number) => {
+  const handleOpenNewPositionWithTicker = (symbol: string, currentPrice: number, stopLossPrice?: number) => {
     setModalInitialTicker(symbol);
     setModalInitialPrice(currentPrice);
+    setModalInitialStopPrice(stopLossPrice && stopLossPrice > 0 && stopLossPrice < currentPrice ? stopLossPrice : undefined);
     setIsNewPositionModalOpen(true);
   };
 
@@ -895,7 +897,7 @@ export default function App() {
           setActiveTab('charts');
         }}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
-        onOpenNewPosition={() => setIsNewPositionModalOpen(true)}
+        onOpenNewPosition={() => handleOpenNewPositionWithTicker(selectedSymbol, quotesMap.get(selectedSymbol)?.price || 100)}
         onDismissAlert={handleDismissAlert}
         onClearCache={handleClearCacheAndResetData}
         isResettingCache={isResettingCache}
@@ -1077,6 +1079,7 @@ export default function App() {
         onSavePosition={handleSavePosition}
         initialTicker={modalInitialTicker}
         initialPrice={modalInitialPrice}
+        initialStopLossPrice={modalInitialStopPrice}
         universe={universe}
       />
 

@@ -159,6 +159,7 @@ export interface SignalRuleConfig {
     minRvol?: number;
     minPriceMovePct?: number;
     intradayPriceMovePct?: number;
+    requireVolumeConfirmation?: boolean; // 8th pillar: closed-candle volume >= minRvol x its trailing average
   };
 }
 
@@ -509,6 +510,13 @@ export interface BacktestResult {
     benchmark: number;
   }[];
   trades: BacktestTrade[];
+  // Optional walk-forward validation fields (populated by the dual-timeframe
+  // single-ticker backtest; absent/undefined for the legacy universe backtest).
+  strategyName?: string;
+  isWalkForward?: boolean;
+  inSample?: { trades: number; winRatePct: number; profitFactor: number; netReturnPct: number };
+  outOfSample?: { trades: number; winRatePct: number; profitFactor: number; netReturnPct: number };
+  overfittingWarning?: string;
 }
 
 export interface NewsItem {

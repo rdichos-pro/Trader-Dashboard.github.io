@@ -19,7 +19,8 @@ import {
   TrendingUp, 
   Zap 
 } from 'lucide-react';
-import { runBacktest } from '../services/backtester';
+import { runBacktest, runStockWalkForwardBacktest } from '../services/backtester';
+import { generateExtendedHistoricalCandles } from '../services/mockMarketData';
 import { BacktestParams, BacktestResult, TickerQuote } from '../types/trading';
 import { formatCompactNumber, formatCurrency, formatDate, formatPercent } from '../utils/formatters';
 
@@ -46,14 +47,25 @@ export const BacktestTab: React.FC<BacktestTabProps> = ({
     holdoutDays: 30,
   });
 
+  const runSelectedBacktest = (p: BacktestParams): BacktestResult => {
+    if (p.universeScope === 'SINGLE' && p.specificTicker) {
+      // Real dual-timeframe (1HR entry + 1D macro) 8-pillar strategy, walk-forward validated.
+      const candles1h = generateExtendedHistoricalCandles(p.specificTicker, '60', 365 * 24);
+      const candlesD = generateExtendedHistoricalCandles(p.specificTicker, 'D', 400);
+      return runStockWalkForwardBacktest(p.specificTicker, candles1h, candlesD, 10000, p.holdoutDays || 30, 25);
+    }
+    // Legacy single-timeframe (4H) engine for whole-universe scans.
+    return runBacktest(p);
+  };
+
   const [isRunning, setIsRunning] = useState(false);
-  const [result, setResult] = useState<BacktestResult | null>(() => runBacktest(params));
+  const [result, setResult] = useState<BacktestResult | null>(() => runSelectedBacktest(params));
 
   const handleRunTest = (e: React.FormEvent) => {
     e.preventDefault();
     setIsRunning(true);
     setTimeout(() => {
-      const res = runBacktest(params);
+      const res = runSelectedBacktest(params);
       setResult(res);
       setIsRunning(false);
     }, 250);
@@ -74,7 +86,7 @@ export const BacktestTab: React.FC<BacktestTabProps> = ({
         </div>
 
         <div className="text-xs font-mono text-emerald-400 bg-[#0B0E14] px-3 py-1.5 rounded-lg border border-slate-800">
-          6-Month Lookback Dataset
+          {params.universeScope === 'SINGLE' ? '1HR+1D Walk-Forward (1Yr Dataset)' : '6-Month Lookback Dataset'}
         </div>
       </div>
 
@@ -87,20 +99,23 @@ export const BacktestTab: React.FC<BacktestTabProps> = ({
           </h3>
 
           <form onSubmit={handleRunTest} className="space-y-3.5 text-xs">
-            {/* Strategy Selection */}
-            <div>
-              <label className="text-slate-400 block mb-1 font-medium">Strategy Trigger Template</label>
-              <select
-                value={params.strategyId}
-                onChange={e => setParams({ ...params, strategyId: e.target.value })}
-                className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2.5 text-white font-medium focus:border-emerald-500"
-              >
-                <option value="rule-breakout-vol">20-Day Breakout + 1.5x Volume Spike</option>
-                <option value="rule-ma-crossover">20 EMA / 50 SMA Golden Cross</option>
-                <option value="rule-rsi-oversold">RSI(14) Oversold Bounce (&lt; 32)</option>
-                <option value="rule-rvol-momentum">RVOL Spike (&gt; 2.0x) + &gt;3.5% Move</option>
-              </select>
-            </div>
+            {/* Strategy Selection - legacy engine only; the single-ticker engine below auto-selects via walk-forward */}
+            {params.universeScope !== 'SINGLE' && (
+              <div>
+                <label className="text-slate-400 block mb-1 font-medium">Strategy Trigger Template</label>
+                <select
+                  value={params.strategyId}
+                  onChange={e => setParams({ ...params, strategyId: e.target.value })}
+                  className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2.5 text-white font-medium focus:border-emerald-500"
+                >
+                  <option value="rule-breakout-vol">20-Day Breakout + 1.5x Volume Spike</option>
+                  <option value="rule-ma-crossover">20 EMA / 50 SMA Golden Cross</option>
+                  <option value="rule-rsi-oversold">RSI(14) Oversold Bounce (&lt; 32)</option>
+                  <option value="rule-rvol-momentum">RVOL Spike (&gt; 2.0x) + &gt;3.5% Move</option>
+                </select>
+              </div>
+            )}
+
 
             {/* Universe Scope */}
             <div>
@@ -148,73 +163,86 @@ export const BacktestTab: React.FC<BacktestTabProps> = ({
               </div>
             )}
 
-            {/* Risk / Exit Thresholds */}
-            <div className="grid grid-cols-2 gap-3 font-mono">
-              <div>
-                <label className="text-slate-400 font-sans block mb-1 font-medium">Stop-Loss (%)</label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={params.stopLossPct}
-                  onChange={e => setParams({ ...params, stopLossPct: Number(e.target.value) })}
-                  className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-rose-400 font-bold"
-                />
+            {params.universeScope === 'SINGLE' ? (
+              <div className="bg-emerald-950/30 border border-emerald-900/50 p-2.5 rounded-lg flex items-start gap-2">
+                <Cpu className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-emerald-200/80 leading-snug">
+                  Tests all 6 real 1D+1HR 8-pillar Ichimoku variants (volume-confirmed) and auto-selects the best performer on in-sample data — exits (stop/target) are managed internally per-strategy, not user-set here.
+                </p>
               </div>
+            ) : (
+              <>
+                {/* Risk / Exit Thresholds */}
+                <div className="grid grid-cols-2 gap-3 font-mono">
+                  <div>
+                    <label className="text-slate-400 font-sans block mb-1 font-medium">Stop-Loss (%)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={params.stopLossPct}
+                      onChange={e => setParams({ ...params, stopLossPct: Number(e.target.value) })}
+                      className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-rose-400 font-bold"
+                    />
+                  </div>
 
-              <div>
-                <label className="text-slate-400 font-sans block mb-1 font-medium">Take-Profit (%)</label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={params.takeProfitPct}
-                  onChange={e => setParams({ ...params, takeProfitPct: Number(e.target.value) })}
-                  className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-emerald-400 font-bold"
-                />
-              </div>
-            </div>
+                  <div>
+                    <label className="text-slate-400 font-sans block mb-1 font-medium">Take-Profit (%)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={params.takeProfitPct}
+                      onChange={e => setParams({ ...params, takeProfitPct: Number(e.target.value) })}
+                      className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-emerald-400 font-bold"
+                    />
+                  </div>
+                </div>
 
-            {/* Max Hold Duration */}
-            <div>
-              <label className="text-slate-400 block mb-1 font-medium">Max Holding Window</label>
-              <div className="flex items-center space-x-2 font-mono">
-                <input
-                  type="number"
-                  value={params.maxHoldDays}
-                  onChange={e => setParams({ ...params, maxHoldDays: Number(e.target.value) })}
-                  className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-slate-100 font-bold"
-                />
-                <span className="text-slate-400 font-sans text-xs">Days</span>
-              </div>
-            </div>
+                {/* Max Hold Duration */}
+                <div>
+                  <label className="text-slate-400 block mb-1 font-medium">Max Holding Window</label>
+                  <div className="flex items-center space-x-2 font-mono">
+                    <input
+                      type="number"
+                      value={params.maxHoldDays}
+                      onChange={e => setParams({ ...params, maxHoldDays: Number(e.target.value) })}
+                      className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-slate-100 font-bold"
+                    />
+                    <span className="text-slate-400 font-sans text-xs">Days</span>
+                  </div>
+                </div>
 
-            {/* Realism Parameters */}
-            <div className="grid grid-cols-2 gap-3 font-mono">
-              <div>
-                <label className="text-slate-400 font-sans block mb-1 font-medium">Slippage (%)</label>
-                <input
-                  type="number"
-                  step="0.05"
-                  value={params.slippagePct}
-                  onChange={e => setParams({ ...params, slippagePct: Number(e.target.value) })}
-                  className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-amber-400 font-bold"
-                />
-              </div>
+                {/* Realism Parameters */}
+                <div className="grid grid-cols-2 gap-3 font-mono">
+                  <div>
+                    <label className="text-slate-400 font-sans block mb-1 font-medium">Slippage (%)</label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={params.slippagePct}
+                      onChange={e => setParams({ ...params, slippagePct: Number(e.target.value) })}
+                      className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-amber-400 font-bold"
+                    />
+                  </div>
 
-              <div>
-                <label className="text-slate-400 font-sans block mb-1 font-medium">Commission ($)</label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={params.commissionPerTrade}
-                  onChange={e => setParams({ ...params, commissionPerTrade: Number(e.target.value) })}
-                  className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-slate-300 font-bold"
-                />
-              </div>
-            </div>
+                  <div>
+                    <label className="text-slate-400 font-sans block mb-1 font-medium">Commission ($)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={params.commissionPerTrade}
+                      onChange={e => setParams({ ...params, commissionPerTrade: Number(e.target.value) })}
+                      className="w-full bg-[#0B0E14] border border-slate-800 rounded-lg p-2 text-slate-300 font-bold"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Out of Sample Holdout */}
             <div>
-              <label className="text-slate-400 block mb-1 font-medium">OOS Holdout Window (To catch overfitting)</label>
+              <label className="text-slate-400 block mb-1 font-medium">
+                {params.universeScope === 'SINGLE' ? 'Walk-Forward Holdout Window' : 'OOS Holdout Window (To catch overfitting)'}
+              </label>
               <div className="flex items-center space-x-2 font-mono">
                 <input
                   type="number"
@@ -224,6 +252,11 @@ export const BacktestTab: React.FC<BacktestTabProps> = ({
                 />
                 <span className="text-slate-400 font-sans text-xs">Days (Untouched)</span>
               </div>
+              {params.universeScope === 'SINGLE' && (
+                <p className="text-[10px] text-slate-500 mt-1 leading-snug">
+                  Strategy is selected on data before this window only, then validated on this window untouched. Results below are the out-of-sample numbers.
+                </p>
+              )}
             </div>
 
             {params.universeScope === 'ALL' && (
@@ -250,6 +283,60 @@ export const BacktestTab: React.FC<BacktestTabProps> = ({
         <div className="lg:col-span-2 space-y-4">
           {result && (
             <>
+              {result.isWalkForward && (
+                <div className="bg-[#161B22] p-4 rounded-lg border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h4 className="font-bold text-xs text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                      <Award className="w-4 h-4 text-emerald-400" />
+                      Walk-Forward Validation
+                    </h4>
+                    {result.strategyName && (
+                      <span className="text-[11px] font-mono text-emerald-300 bg-emerald-950/50 border border-emerald-800 px-2 py-0.5 rounded">
+                        Selected: {result.strategyName}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="bg-[#0B0E14] p-3 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-500 uppercase font-medium block mb-1">In-Sample (Selection Data)</span>
+                      {result.inSample ? (
+                        <div className="font-mono space-y-0.5">
+                          <div className="text-slate-300">{result.inSample.trades} trades</div>
+                          <div className="text-slate-300">{result.inSample.winRatePct}% WR &middot; {result.inSample.profitFactor}x PF</div>
+                          <div className={result.inSample.netReturnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                            {result.inSample.netReturnPct >= 0 ? '+' : ''}{result.inSample.netReturnPct}%
+                          </div>
+                        </div>
+                      ) : <span className="text-slate-500">N/A</span>}
+                    </div>
+                    <div className="bg-[#0B0E14] p-3 rounded-lg border border-emerald-900/60">
+                      <span className="text-[10px] text-emerald-500 uppercase font-medium block mb-1">Out-of-Sample (Real Test)</span>
+                      {result.outOfSample ? (
+                        <div className="font-mono space-y-0.5">
+                          <div className="text-slate-300">{result.outOfSample.trades} trades</div>
+                          <div className="text-slate-300">{result.outOfSample.winRatePct}% WR &middot; {result.outOfSample.profitFactor}x PF</div>
+                          <div className={result.outOfSample.netReturnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                            {result.outOfSample.netReturnPct >= 0 ? '+' : ''}{result.outOfSample.netReturnPct}%
+                          </div>
+                        </div>
+                      ) : <span className="text-slate-500">N/A</span>}
+                    </div>
+                  </div>
+
+                  {result.overfittingWarning && (
+                    <div className="bg-amber-950/40 border border-amber-900/50 p-2.5 rounded-lg flex items-start gap-2">
+                      <Activity className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-amber-200/80 leading-snug">{result.overfittingWarning}</p>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-slate-500 leading-snug">
+                    The KPI cards and trade log below reflect the <strong>out-of-sample</strong> result only — the strategy was picked using the in-sample data above, so its own numbers aren't a fair test of forward performance.
+                  </p>
+                </div>
+              )}
+
               {/* Top Result KPI Cards */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {/* Win Rate */}

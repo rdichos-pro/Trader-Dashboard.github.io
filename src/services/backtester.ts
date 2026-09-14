@@ -1,6 +1,7 @@
 import { BacktestParams, BacktestResult, BacktestRuleConfig, BacktestTrade, Candle } from '../types/trading';
 import { enrichCandlesWithIndicators } from '../utils/indicators';
 import { generateHistoricalCandles } from './mockMarketData';
+import { enrichCandlesWithIndicatorsFull, getStrategyDefinitions, runSingleStrategyBacktest, StrategyPerformanceStats } from './xauusdBacktestEngine';
 
 /**
  * Executes a simulated rule-based backtest on historical daily candles using
@@ -355,5 +356,163 @@ function executeBacktest(
     avgLossPct: Number(avgLossPct.toFixed(2)),
     equityCurve,
     trades,
+  };
+}
+
+function emptyWalkForwardResult(ticker: string, initialCapital: number, period: string): BacktestResult {
+  return {
+    ticker,
+    period,
+    initialCapital,
+    endingCapital: initialCapital,
+    netProfit: 0,
+    totalReturnPct: 0,
+    benchmarkReturnPct: 0,
+    totalTrades: 0,
+    winningTrades: 0,
+    losingTrades: 0,
+    winRatePct: 0,
+    winRate: 0,
+    profitFactor: 1,
+    maxDrawdownPct: 0,
+    avgTradeReturnPct: 0,
+    avgWinPct: 0,
+    avgLossPct: 0,
+    equityCurve: [],
+    trades: [],
+    isWalkForward: true,
+  };
+}
+
+/**
+ * Real dual-timeframe (1HR entry + 1D macro reference) walk-forward backtest for stocks,
+ * using the same 6-strategy Ichimoku engine that powers the XAUUSD Daytrade tab — this is
+ * the strategy that actually matches the live 8-pillar Entry Signals confluence, unlike the
+ * single-timeframe runBacktest() above.
+ *
+ * Walk-forward validation: the last `holdoutDays` of data are held out. All 6 strategy
+ * variants are ranked on the in-sample (earlier) data only; the single best-scoring one is
+ * then re-run, unmodified, on the untouched out-of-sample window. The OUT-OF-SAMPLE result
+ * is what's returned as the primary BacktestResult — the in-sample number is attached
+ * separately for comparison, since in-sample performance alone is a poor guide to real
+ * forward performance (it's the same data the strategy was picked to fit).
+ */
+export function runStockWalkForwardBacktest(
+  ticker: string,
+  candlesEntry1h: Candle[],
+  candlesMacroD: Candle[],
+  initialCapital: number = 10000,
+  holdoutDays: number = 60,
+  positionSizePct: number = 25
+): BacktestResult {
+  const allEntryBars = enrichCandlesWithIndicatorsFull(candlesEntry1h);
+  const allMacroBars = enrichCandlesWithIndicatorsFull(candlesMacroD);
+
+  if (allEntryBars.length < 80 || allMacroBars.length < 10) {
+    return emptyWalkForwardResult(ticker, initialCapital, 'Insufficient Data');
+  }
+
+  const lastTs = allEntryBars[allEntryBars.length - 1].timestamp;
+  const cutoffTs = lastTs - holdoutDays * 24 * 60 * 60 * 1000;
+
+  const inSampleEntry = allEntryBars.filter(b => b.timestamp < cutoffTs);
+  const outOfSampleEntry = allEntryBars.filter(b => b.timestamp >= cutoffTs);
+  const inSampleMacro = allMacroBars.filter(b => b.timestamp < cutoffTs);
+  const outOfSampleMacro = allMacroBars.filter(b => b.timestamp >= cutoffTs);
+
+  if (inSampleEntry.length < 50 || outOfSampleEntry.length < 30) {
+    return emptyWalkForwardResult(ticker, initialCapital, 'Insufficient Data For Walk-Forward Split (widen the dataset or shorten the holdout window)');
+  }
+
+  // The real 8-pillar strategy family: 1D macro reference + 1HR entry, volume-confirmed.
+  const strategyDefs = getStrategyDefinitions('1D', '1HR', true);
+
+  let bestInSample: StrategyPerformanceStats | null = null;
+  let bestDef = strategyDefs[0];
+  for (const def of strategyDefs) {
+    const stats = runSingleStrategyBacktest(def, inSampleEntry, inSampleMacro, initialCapital, 'PERCENT_OF_CAPITAL', positionSizePct);
+    if (!bestInSample || stats.compositeScore > bestInSample.compositeScore) {
+      bestInSample = stats;
+      bestDef = def;
+    }
+  }
+
+  // Validate the SAME strategy (no re-selection) on the untouched holdout window.
+  const oosStats = runSingleStrategyBacktest(bestDef, outOfSampleEntry, outOfSampleMacro, initialCapital, 'PERCENT_OF_CAPITAL', positionSizePct);
+
+  let overfittingWarning: string | undefined;
+  if (oosStats.totalTrades < 3) {
+    overfittingWarning = `Only ${oosStats.totalTrades} out-of-sample trade(s) in the holdout window — too few to draw a reliable conclusion. Try a longer dataset or a shorter holdout window.`;
+  } else if (bestInSample && bestInSample.totalTrades >= 5) {
+    const wrDrop = bestInSample.winRatePct - oosStats.winRatePct;
+    if (wrDrop > 20 || (bestInSample.profitFactor >= 1.5 && oosStats.profitFactor < 1)) {
+      overfittingWarning = `In-sample looked much stronger (${bestInSample.winRatePct}% WR, ${bestInSample.profitFactor}x PF) than out-of-sample (${oosStats.winRatePct}% WR, ${oosStats.profitFactor}x PF) — sign of overfitting or a regime shift, not a settings problem.`;
+    }
+  }
+
+  const trades: BacktestTrade[] = oosStats.trades.map(t => ({
+    id: t.id,
+    ticker,
+    entryDate: t.entryTime.slice(0, 10),
+    entryPrice: t.entryPrice,
+    exitDate: t.exitTime === 'RUNNING (LIVE)' ? t.entryTime.slice(0, 10) : t.exitTime.slice(0, 10),
+    exitPrice: t.exitPrice,
+    quantity: t.quantity ?? 0,
+    pnlDollars: t.pnlDollar,
+    pnlPercent: t.pnlPct,
+    entryReason: t.entryReason,
+    exitReason: t.exitReason,
+    holdingPeriodDays: Math.round((t.holdingMinutes || 0) / (24 * 60)),
+    returnPct: t.pnlPct,
+  }));
+
+  const oosFirstClose = outOfSampleEntry[0]?.close || 1;
+  const barsByTime = new Map(outOfSampleEntry.map(b => [b.time, b]));
+  const equityCurve = oosStats.equityCurve.map(pt => {
+    const bar = barsByTime.get(pt.time);
+    const benchmark = bar ? initialCapital * (bar.close / oosFirstClose) : initialCapital;
+    return { date: pt.time.slice(0, 10), equity: pt.equity, benchmark: Number(benchmark.toFixed(2)) };
+  });
+  const benchmarkReturnPct = equityCurve.length > 0
+    ? Number((((equityCurve[equityCurve.length - 1].benchmark - initialCapital) / initialCapital) * 100).toFixed(2))
+    : 0;
+
+  return {
+    ticker,
+    period: `Walk-Forward: last ${holdoutDays}D held out (in-sample: ${inSampleEntry.length} 1HR bars, out-of-sample: ${outOfSampleEntry.length} 1HR bars)`,
+    initialCapital,
+    endingCapital: oosStats.endingCapital,
+    netProfit: oosStats.netProfitDollar,
+    totalReturnPct: oosStats.netProfitPct,
+    benchmarkReturnPct,
+    totalTrades: oosStats.totalTrades,
+    winningTrades: oosStats.winningTrades,
+    losingTrades: oosStats.losingTrades,
+    winRatePct: oosStats.winRatePct,
+    winRate: oosStats.winRatePct,
+    profitFactor: oosStats.profitFactor,
+    maxDrawdownPct: oosStats.maxDrawdownPct,
+    avgTradeReturnPct: oosStats.totalTrades > 0
+      ? Number((oosStats.trades.reduce((s, t) => s + t.pnlPct, 0) / oosStats.totalTrades).toFixed(2))
+      : 0,
+    avgWinPct: oosStats.avgWinPct,
+    avgLossPct: oosStats.avgLossPct,
+    equityCurve,
+    trades,
+    strategyName: bestDef.shortName,
+    isWalkForward: true,
+    inSample: bestInSample ? {
+      trades: bestInSample.totalTrades,
+      winRatePct: bestInSample.winRatePct,
+      profitFactor: bestInSample.profitFactor,
+      netReturnPct: bestInSample.netProfitPct,
+    } : undefined,
+    outOfSample: {
+      trades: oosStats.totalTrades,
+      winRatePct: oosStats.winRatePct,
+      profitFactor: oosStats.profitFactor,
+      netReturnPct: oosStats.netProfitPct,
+    },
+    overfittingWarning,
   };
 }

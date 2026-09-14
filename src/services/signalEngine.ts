@@ -5,11 +5,11 @@ import { marketDataService } from './marketDataService';
 export const DEFAULT_RULES: SignalRuleConfig[] = [
   {
     id: 'rule-ichimoku-master-entry',
-    name: '1D TK Crossover + 1HR Pure Ichimoku Confluence (7 Pillars)',
+    name: '1D TK Crossover + 1HR Pure Ichimoku Confluence (8 Pillars)',
     category: 'ichimoku_confluence',
     enabled: true,
     direction: 'BULLISH',
-    description: 'Strict 7-Pillar Confluence: 1D Tenkan-Kijun Cross (Macro) + 1HR 6-Rule Pure Ichimoku (TK Cross, Price > Cloud, TK > Cloud, Chikou[-26], Green Future Cloud, Kumo Clearance). Zero oscillators (no Stoch, no CCI). Exit strictly on 1HR chart below 1st closed bar after reversal cross.',
+    description: 'Strict 8-Pillar Confluence: 1D Tenkan-Kijun Cross (Macro) + 1HR 6-Rule Pure Ichimoku (TK Cross, Price > Cloud, TK > Cloud, Chikou[-26], Green Future Cloud, Kumo Clearance) + Volume Confirmation (RVOL >= 1.2x). Zero oscillators (no Stoch, no CCI). Exit strictly on 1HR chart below 1st closed bar after reversal cross.',
     params: {
       tenkanPeriod: 9,
       kijunPeriod: 26,
@@ -22,6 +22,8 @@ export const DEFAULT_RULES: SignalRuleConfig[] = [
       cciThreshold: 50,
       timeframe: '1HR',
       macroTimeframe: '1D',
+      requireVolumeConfirmation: true,
+      minRvol: 1.2,
     },
   },
 ];
@@ -30,12 +32,12 @@ export const DEFAULT_SIGNAL_RULES = DEFAULT_RULES;
 
 export interface ConfluenceEvaluationResult {
   ticker: string;
-  isMasterEntryTriggered: boolean; // Strict BUY signal (ALL 7 Pillars: 1D TK Cross + 6 1HR Ichimoku Rules)
+  isMasterEntryTriggered: boolean; // Strict BUY signal (ALL 8 Pillars: 1D TK Cross + 6 1HR Ichimoku Rules)
   isMasterExitTriggered: boolean;  // Strict SELL/EXIT signal (Strictly on 1HR chart: below 1st closed bar after reversal cross)
   isFreshTrendInception: boolean;  // Fresh start of trend (Triggered on last 1-2 closed 1HR bars)
   isActivelyRidingTrend: boolean;  // Active bull trend continuation to ride
   
-  // 1D Macro + 1HR Pure Ichimoku Confluence (7 Pillars)
+  // 1D Macro + 1HR Pure Ichimoku Confluence (8 Pillars)
   entryDailyTkCross: boolean;         // Pillar 1: 1D Daily Tenkan-Kijun Golden Cross
   entry1hTkBullish: boolean;          // Pillar 2: 1HR Tenkan >= Kijun
   entry1hPriceAboveCloud: boolean;    // Pillar 3: 1HR Price > Cloud Top
@@ -43,7 +45,9 @@ export interface ConfluenceEvaluationResult {
   entry1hChikouBullish: boolean;      // Pillar 5: 1HR Chikou Span > Close[-26]
   entry1hFutureCloudBullish: boolean; // Pillar 6: 1HR Future Senkou A > Senkou B (Green Cloud)
   entry1hKumoClearance: boolean;      // Pillar 7: 1HR Kumo Clearance (No Chop)
-  totalPillarsPassed: number;         // 0 to 7
+  entry1hVolumeConfirmed: boolean;    // Pillar 8: Closed 1HR candle volume >= minRvol x trailing average
+  candleRvol: number;                 // Closed candle volume relative to its trailing average
+  totalPillarsPassed: number;         // 0 to 8
 
   // Exit Engine (Strictly Based on 1HR Chart)
   hasReversalCross: boolean;          // 1HR Tenkan crossed below Kijun
@@ -156,6 +160,8 @@ export function evaluateConfluenceDetails(
     entry1hChikouBullish: false,
     entry1hFutureCloudBullish: false,
     entry1hKumoClearance: false,
+    entry1hVolumeConfirmed: false,
+    candleRvol: 1,
     totalPillarsPassed: 0,
     hasReversalCross: false,
     reversalCrossBarClose: 0,
@@ -280,6 +286,20 @@ export function evaluateConfluenceDetails(
   const entry1hFutureCloudBullish = futureSenkouA > futureSenkouB;
   const entry1hKumoClearance = closedClose > cloudTop && ((closedClose - cloudTop) / Math.max(1, cloudTop) >= 0.0005);
 
+  // 8. Volume Confirmation: closed candle volume vs its trailing average (RVOL).
+  // A Kumo breakout with rising volume is more likely to follow through; low-volume
+  // breakouts reverse more often. Toggle off via ruleParams.requireVolumeConfirmation.
+  const volLookback = 20;
+  const volStart = Math.max(0, closedIndex - volLookback);
+  const trailingVolumes = candles.slice(volStart, closedIndex).map(c => c.volume || 0).filter(v => v > 0);
+  const avgTrailingVolume = trailingVolumes.length > 0
+    ? trailingVolumes.reduce((a, b) => a + b, 0) / trailingVolumes.length
+    : (closedCandle.volume || 0);
+  const candleRvol = avgTrailingVolume > 0 ? (closedCandle.volume || 0) / avgTrailingVolume : 1;
+  const requireVolumeConfirmation = ruleParams?.requireVolumeConfirmation !== false;
+  const minRvol = ruleParams?.minRvol ?? 1.2;
+  const entry1hVolumeConfirmed = !requireVolumeConfirmation || candleRvol >= minRvol;
+
   const totalPillarsPassed = 
     (entryDailyTkCross ? 1 : 0) +
     (entry1hTkBullish ? 1 : 0) +
@@ -287,9 +307,10 @@ export function evaluateConfluenceDetails(
     (entry1hTkAboveCloud ? 1 : 0) +
     (entry1hChikouBullish ? 1 : 0) +
     (entry1hFutureCloudBullish ? 1 : 0) +
-    (entry1hKumoClearance ? 1 : 0);
+    (entry1hKumoClearance ? 1 : 0) +
+    (entry1hVolumeConfirmed ? 1 : 0);
 
-  const isMasterEntryTriggered = totalPillarsPassed === 7;
+  const isMasterEntryTriggered = totalPillarsPassed === 8;
 
   // 3. EXIT LOGIC (Strictly based on 1HR chart):
   // "the exit signal should be below the first closed bar after the reversal cross"
@@ -332,13 +353,14 @@ export function evaluateConfluenceDetails(
   if (!entry1hChikouBullish) missingEntryConditions.push(`1HR Chikou Close ($${closedClose.toFixed(2)}) <= Close[-26] ($${close26Ago.toFixed(2)})`);
   if (!entry1hFutureCloudBullish) missingEntryConditions.push(`1HR Future Cloud Red (Span A <= Span B)`);
   if (!entry1hKumoClearance) missingEntryConditions.push('1HR Close within 0.05% Kumo Chop buffer');
+  if (!entry1hVolumeConfirmed) missingEntryConditions.push(`1HR Volume RVOL (${candleRvol.toFixed(2)}x) below required ${minRvol}x threshold`);
 
   const missingExitConditions: string[] = [];
   if (!hasReversalCross) missingExitConditions.push('1HR Tenkan has not crossed below Kijun');
   else if (!isExitTriggered) missingExitConditions.push(`1HR Price ($${closedClose.toFixed(2)}) holding above 1st reversal bar close ($${reversalCrossBarClose.toFixed(2)})`);
 
-  const isAlmostBuy = !isMasterEntryTriggered && !isMasterExitTriggered && totalPillarsPassed >= 5;
-  const almostBuyMissingCount = 7 - totalPillarsPassed;
+  const isAlmostBuy = !isMasterEntryTriggered && !isMasterExitTriggered && totalPillarsPassed >= 6;
+  const almostBuyMissingCount = 8 - totalPillarsPassed;
   const isAlmostExit = hasReversalCross && !isExitTriggered;
 
   // Trend-Riding Dynamics
@@ -363,7 +385,7 @@ export function evaluateConfluenceDetails(
   }
 
   const isActivelyRidingTrend = isMasterEntryTriggered && barsInTrend >= 2;
-  const trendStrengthScore = Math.round((totalPillarsPassed / 7) * 100);
+  const trendStrengthScore = Math.round((totalPillarsPassed / 8) * 100);
 
   let trendStage: ConfluenceEvaluationResult['trendStage'] = 'NEUTRAL';
   let trendActionAdvice = '';
@@ -379,16 +401,16 @@ export function evaluateConfluenceDetails(
     trendActionAdvice = '☁️ 1HR IN-CLOUD CONSOLIDATION: Price trapped in Kumo chop. Stay on sidelines.';
   } else if (isFreshTrendInception) {
     trendStage = 'TREND_INCEPTION';
-    trendActionAdvice = '🎯 CONFIRMED 1HR TREND START: All 7 Confluence Pillars confirmed (1D TK Cross + 6 1HR Ichimoku Rules).';
+    trendActionAdvice = '🎯 CONFIRMED 1HR TREND START: All 8 Confluence Pillars confirmed (1D TK Cross + 6 1HR Ichimoku Rules + Volume Confirmation).';
   } else if (isActivelyRidingTrend) {
     trendStage = 'RIDING_TREND';
     trendActionAdvice = `🌊 RIDING 1HR TREND (${barsInTrend} bars): Pure Ichimoku structure strong. Hold with 1HR Kijun ($${kijun.toFixed(2)}) & Cloud ($${cloudTop.toFixed(2)}) support.`;
   } else if (isAlmostBuy) {
     trendStage = 'APPROACHING_BUY';
-    trendActionAdvice = `⚡ ALMOST A BUY (${totalPillarsPassed}/7 pillars met): Setup coiling! Missing: ${missingEntryConditions[0] || '1 pillar'}.`;
+    trendActionAdvice = `⚡ ALMOST A BUY (${totalPillarsPassed}/8 pillars met): Setup coiling! Missing: ${missingEntryConditions[0] || '1 pillar'}.`;
   } else {
     trendStage = 'NEUTRAL';
-    trendActionAdvice = 'Scanning 1HR candles: Awaiting 7-pillar confluence entry or 1HR reversal cross exit.';
+    trendActionAdvice = 'Scanning 1HR candles: Awaiting 8-pillar confluence entry or 1HR reversal cross exit.';
   }
 
   // Backward-compatible fields
@@ -426,8 +448,8 @@ export function evaluateConfluenceDetails(
   const stochSummary = 'Oscillators removed (Pure Ichimoku Strategy)';
   const cciSummary = 'Oscillators removed (Pure Ichimoku Strategy)';
   const entrySummary = isMasterEntryTriggered
-    ? '🎯 7/7 CONFLUENCE CONFIRMED: 1D TK Golden Cross + 1HR 6-Rule Pure Ichimoku'
-    : `Awaiting Full Alignment (${totalPillarsPassed}/7 pillars)`;
+    ? '🎯 8/8 CONFLUENCE CONFIRMED: 1D TK Golden Cross + 1HR 6-Rule Pure Ichimoku + Volume'
+    : `Awaiting Full Alignment (${totalPillarsPassed}/8 pillars)`;
   const exitSummary = isExitTriggered
     ? `🛑 1HR REVERSAL EXIT TRIGGERED (< $${reversalCrossBarClose.toFixed(2)})`
     : hasReversalCross
@@ -448,6 +470,8 @@ export function evaluateConfluenceDetails(
     entry1hChikouBullish,
     entry1hFutureCloudBullish,
     entry1hKumoClearance,
+    entry1hVolumeConfirmed,
+    candleRvol,
     totalPillarsPassed,
     hasReversalCross,
     reversalCrossBarClose,
@@ -533,7 +557,7 @@ export function evaluateTickerSignals(
   const result = evaluateConfluenceDetails(quote.symbol, rawCandles, activeMasterRule.params, macroCandles);
   const candleKey = result.closedCandleTime || (rawCandles.length > 0 ? rawCandles[rawCandles.length - 1].time : 'latest');
 
-  // 1. Strict LONG ENTRY Signal Trigger (BUY) - 7 Pillars Confirmed
+  // 1. Strict LONG ENTRY Signal Trigger (BUY) - 8 Pillars Confirmed
   if (result.isMasterEntryTriggered) {
     const isFresh = result.isFreshTrendInception;
     alerts.push({
@@ -541,7 +565,7 @@ export function evaluateTickerSignals(
       timestamp: new Date().toISOString(),
       ticker: quote.symbol,
       ruleId: activeMasterRule.id,
-      ruleName: isFresh ? '1HR Trend Inception (7/7 Pillars Confirmed)' : '1HR Active Trend Riding (7/7 Pillars)',
+      ruleName: isFresh ? '1HR Trend Inception (8/8 Pillars Confirmed)' : '1HR Active Trend Riding (8/8 Pillars)',
       pipeline: isFresh ? 'Confirmed 1HR Trend Inception' : 'Active Trend Riding',
       signal: 'BUY',
       direction: 'BULLISH',
@@ -604,14 +628,14 @@ export function evaluateTickerSignals(
     });
   }
 
-  // 3. ALMOST A BUY Pre-Alert (Approaching 1HR Long Setup - 6/7 Pillars Met)
+  // 3. ALMOST A BUY Pre-Alert (Approaching 1HR Long Setup - 6-7/8 Pillars Met)
   if (result.isAlmostBuy) {
     alerts.push({
       id: `alert-${quote.symbol}-almost-buy-${candleKey}`,
       timestamp: new Date().toISOString(),
       ticker: quote.symbol,
       ruleId: 'rule-ichimoku-almost-buy',
-      ruleName: `1HR Almost Buy (${result.totalPillarsPassed}/7 Pillars Met)`,
+      ruleName: `1HR Almost Buy (${result.totalPillarsPassed}/8 Pillars Met)`,
       pipeline: 'Approaching Buy Setup',
       signal: 'WARN',
       direction: 'BULLISH',
@@ -708,7 +732,7 @@ export function getAccuracyStats(): SignalAccuracyStats[] {
   return [
     {
       ruleId: 'rule-ichimoku-master-entry',
-      ruleName: '1D Golden Cross + 1HR Pure Ichimoku (7 Pillars)',
+      ruleName: '1D Golden Cross + 1HR Pure Ichimoku (8 Pillars)',
       totalTriggers: 58,
       evaluatedTriggers: 58,
       winCount1D: 47,

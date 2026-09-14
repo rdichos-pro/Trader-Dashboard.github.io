@@ -54,6 +54,11 @@ export interface IndicatorBar {
   // Consolidation / Chop status
   isInsideCloud: boolean;       // Close >= CloudBottom && Close <= CloudTop
   isConsolidation: boolean;     // Trapped in cloud or lack of trend clarity
+
+  // Volume Confirmation (optional 8th pillar, opt-in via requireVolumeConfirmation)
+  avgVolume20?: number;         // Trailing 20-bar average volume
+  rvol?: number;                // This bar's volume relative to avgVolume20
+  volumeConfirmed?: boolean;    // rvol >= 1.2x
 }
 
 export type MarketRegimeType = 'BUY' | 'SELL' | 'CONSOLIDATION';
@@ -372,6 +377,15 @@ export function enrichCandlesWithIndicatorsFull(candles: Candle[]): IndicatorBar
     const isFullBullish = count === 6;
     const isFullBearish = sellCount === 6 || ((tVal < kVal) && (c.close < cBot) && sf4);
 
+    // Volume Confirmation: this bar's volume vs the trailing 20-bar average
+    const volWindowStart = Math.max(0, i - 20);
+    const trailingVols = candles.slice(volWindowStart, i).map(cc => cc.volume || 0).filter(v => v > 0);
+    const avgVolume20 = trailingVols.length > 0
+      ? trailingVols.reduce((a, b) => a + b, 0) / trailingVols.length
+      : (c.volume || 0);
+    const rvol = avgVolume20 > 0 ? (c.volume || 0) / avgVolume20 : 1;
+    const volumeConfirmed = rvol >= 1.2;
+
     const parsedTime = typeof c.time === 'string' ? c.time : new Date(c.time * 1000).toISOString();
     const ts = typeof c.time === 'string' ? new Date(c.time).getTime() : c.time * 1000;
 
@@ -421,6 +435,9 @@ export function enrichCandlesWithIndicatorsFull(candles: Candle[]): IndicatorBar
       isFullBearish,
       isInsideCloud,
       isConsolidation,
+      avgVolume20,
+      rvol,
+      volumeConfirmed,
     });
   }
 
@@ -1018,30 +1035,31 @@ export interface StrategyDef {
   ) => { shouldEnter: boolean; shouldExit: boolean; entryReason: string; exitReason: string };
 }
 
-export function getStrategyDefinitions(macroTimeframe: string = '30M', entryTimeframe: string = '1M'): StrategyDef[] {
+export function getStrategyDefinitions(macroTimeframe: string = '30M', entryTimeframe: string = '1M', requireVolumeConfirmation: boolean = false): StrategyDef[] {
   return [
     {
       id: 'strat-30m-tk-1m-ichimoku',
-      name: `${macroTimeframe} Reference TK Crossover + ${entryTimeframe} Full Ichimoku Rules (${macroTimeframe} Reference + ${entryTimeframe} Entry)`,
+      name: `${macroTimeframe} Reference TK Crossover + ${entryTimeframe} Full Ichimoku Rules (${macroTimeframe} Reference + ${entryTimeframe} Entry)${requireVolumeConfirmation ? ' + Volume' : ''}`,
       shortName: `${macroTimeframe} TK Cross + ${entryTimeframe} Ichimoku`,
-      description: `Flagship Strategy: Requires ${macroTimeframe} Reference Tenkan >= Kijun Golden Crossover for higher-timeframe trend permission + ${entryTimeframe} closed candle satisfying all 6 Ichimoku rules (Tenkan>=Kijun, Price>Cloud, TK>Cloud, Chikou Close>Close[-26], Future Kumo Green, Kumo Clearance). Entry strictly triggers over the last closed ${entryTimeframe} bar with zero oscillators. Exit strictly triggers below the first closed bar after the Tenkan-Kijun reversal cross.`,
-      indicatorsUsed: [`${macroTimeframe} Tenkan-Kijun Crossover`, `${entryTimeframe} Tenkan/Kijun`, `${entryTimeframe} Kumo Cloud`, `${entryTimeframe} Chikou Span (Close > Close[-26])`, `${entryTimeframe} Future Cloud (Senkou A>B)`, `${entryTimeframe} Kumo Clearance`],
+      description: `Flagship Strategy: Requires ${macroTimeframe} Reference Tenkan >= Kijun Golden Crossover for higher-timeframe trend permission + ${entryTimeframe} closed candle satisfying all 6 Ichimoku rules (Tenkan>=Kijun, Price>Cloud, TK>Cloud, Chikou Close>Close[-26], Future Kumo Green, Kumo Clearance)${requireVolumeConfirmation ? ' + Volume Confirmation (RVOL >= 1.2x)' : ''}. Entry strictly triggers over the last closed ${entryTimeframe} bar with zero oscillators. Exit strictly triggers below the first closed bar after the Tenkan-Kijun reversal cross.`,
+      indicatorsUsed: [`${macroTimeframe} Tenkan-Kijun Crossover`, `${entryTimeframe} Tenkan/Kijun`, `${entryTimeframe} Kumo Cloud`, `${entryTimeframe} Chikou Span (Close > Close[-26])`, `${entryTimeframe} Future Cloud (Senkou A>B)`, `${entryTimeframe} Kumo Clearance`, ...(requireVolumeConfirmation ? [`${entryTimeframe} Volume (RVOL >= 1.2x)`] : [])],
       timeframeTag: `DUAL (${entryTimeframe}+${macroTimeframe})`,
       checkSignal: (bEntry, prevEntry, bMacro, prevMacro) => {
         const isMacroCross = bMacro ? bMacro.tenkan >= bMacro.kijun : true;
         const isEntryAllRules = bEntry.passedFiltersCount >= 6;
+        const isVolumeOk = !requireVolumeConfirmation || bEntry.volumeConfirmed !== false;
         const fresh = prevEntry 
           ? (prevEntry.passedFiltersCount < 6 && bEntry.passedFiltersCount >= 6) || 
             (prevMacro && prevMacro.tenkan < prevMacro.kijun && bMacro && bMacro.tenkan >= bMacro.kijun)
           : true;
 
-        const shouldEnter = isMacroCross && isEntryAllRules && fresh;
+        const shouldEnter = isMacroCross && isEntryAllRules && isVolumeOk && fresh;
         const shouldExit = false; // Evaluated dynamically via the first closed bar after reversal cross
 
         return {
           shouldEnter,
           shouldExit,
-          entryReason: `${macroTimeframe} Reference TK Golden Cross + ${entryTimeframe} 6-Rule Pure Ichimoku Alignment`,
+          entryReason: `${macroTimeframe} Reference TK Golden Cross + ${entryTimeframe} 6-Rule Pure Ichimoku Alignment${requireVolumeConfirmation ? ' + Volume Confirmed' : ''}`,
           exitReason: 'Exit Below First Closed Bar After Reversal Cross',
         };
       },
@@ -1155,7 +1173,9 @@ export function runSingleStrategyBacktest(
   strat: StrategyDef,
   barsEntry: IndicatorBar[],
   barsMacro: IndicatorBar[],
-  initialCapital: number = 10000
+  initialCapital: number = 10000,
+  positionSizingMode: 'FIXED_UNITS' | 'PERCENT_OF_CAPITAL' = 'FIXED_UNITS',
+  positionSizePct: number = 25
 ): StrategyPerformanceStats {
   const trades: BacktestTradeRecord[] = [];
   const equityCurve: Array<{ time: string; equity: number }> = [
@@ -1175,8 +1195,10 @@ export function runSingleStrategyBacktest(
   let maxDrawdownPct = 0;
 
   // Sizing: 10 oz Gold per trade (or 1 contract)
-  const positionOunces = 10;
+  const positionOunces = 10; // Legacy fixed XAUUSD sizing (used when positionSizingMode === 'FIXED_UNITS')
   const spreadPerOz = 0.35; // typical spread & slippage ($0.35 on Gold)
+  const pctSlippageRate = 0.0005; // 0.05% each way, used only in PERCENT_OF_CAPITAL mode
+  let tradeQuantity = positionOunces;
 
   // Align higher-timeframe macro bars with entry timestamps: at entry index i, find latest completed macro bar
   let pMacroIdx = 0;
@@ -1227,8 +1249,10 @@ export function runSingleStrategyBacktest(
       if (shouldExitResolved || isEmergencyStop || isTakeProfit) {
         const nextBar = barsEntry[i + 1] || bEntry;
         const exitPrice = nextBar.open;
-        const grossPnl = (exitPrice - entryPrice) * positionOunces;
-        const friction = spreadPerOz * positionOunces * 2; // entry + exit spread
+        const grossPnl = (exitPrice - entryPrice) * tradeQuantity;
+        const friction = positionSizingMode === 'PERCENT_OF_CAPITAL'
+          ? (entryPrice + exitPrice) * tradeQuantity * pctSlippageRate
+          : spreadPerOz * tradeQuantity * 2; // entry + exit spread
         const netPnl = grossPnl - friction;
         const pnlPct = Number((((exitPrice - entryPrice) / entryPrice) * 100).toFixed(2));
         const holdingBars = i - entryIndex;
@@ -1261,7 +1285,7 @@ export function runSingleStrategyBacktest(
           entryPrice: Number(entryPrice.toFixed(2)),
           stopLossPrice: Number(tradeSl.toFixed(2)),
           targetPrice: Number(tradeTp.toFixed(2)),
-          quantity: positionOunces,
+          quantity: tradeQuantity,
           isRunning: false,
           exitIndex: i,
           exitTime: nextBar.time,
@@ -1300,6 +1324,9 @@ export function runSingleStrategyBacktest(
         entryReason = `${eReason} (Triggered > Last 1HR Bar Close $${signalBarClose.toFixed(2)})`;
         hasReversalCross = false;
         reversalCrossBarClose = 0;
+        tradeQuantity = positionSizingMode === 'PERCENT_OF_CAPITAL'
+          ? Math.max(0, Math.floor((currentEquity * (positionSizePct / 100)) / entryPrice))
+          : positionOunces;
       }
     }
   }
@@ -1308,8 +1335,10 @@ export function runSingleStrategyBacktest(
   if (inPosition && barsEntry.length > 0) {
     const lastBar = barsEntry[barsEntry.length - 1];
     const currentPrice = lastBar.close;
-    const grossPnl = (currentPrice - entryPrice) * positionOunces;
-    const friction = spreadPerOz * positionOunces;
+    const grossPnl = (currentPrice - entryPrice) * tradeQuantity;
+    const friction = positionSizingMode === 'PERCENT_OF_CAPITAL'
+      ? (entryPrice + currentPrice) * tradeQuantity * pctSlippageRate
+      : spreadPerOz * tradeQuantity;
     const netPnl = grossPnl - friction;
     const pnlPct = Number((((currentPrice - entryPrice) / entryPrice) * 100).toFixed(2));
     const holdingBars = barsEntry.length - 1 - entryIndex;
@@ -1324,7 +1353,7 @@ export function runSingleStrategyBacktest(
       entryPrice: Number(entryPrice.toFixed(2)),
       stopLossPrice: Number(tradeSl.toFixed(2)),
       targetPrice: Number(tradeTp.toFixed(2)),
-      quantity: positionOunces,
+      quantity: tradeQuantity,
       isRunning: true,
       exitIndex: barsEntry.length - 1,
       exitTime: 'RUNNING (LIVE)',
@@ -1562,16 +1591,19 @@ export function runAllStrategiesBacktest(
   candlesTrend: Candle[],
   initialCapital: number = 10000,
   trendTimeframe: string = '30M',
-  entryTimeframe: string = '1M'
+  entryTimeframe: string = '1M',
+  positionSizingMode: 'FIXED_UNITS' | 'PERCENT_OF_CAPITAL' = 'FIXED_UNITS',
+  requireVolumeConfirmation: boolean = false,
+  positionSizePct: number = 25
 ): BacktestSuiteResult {
   const barsEntry = enrichCandlesWithIndicatorsFull(candles5m);
   const barsMacro = enrichCandlesWithIndicatorsFull(candlesTrend);
-  const strategyDefs = getStrategyDefinitions(trendTimeframe, entryTimeframe);
+  const strategyDefs = getStrategyDefinitions(trendTimeframe, entryTimeframe, requireVolumeConfirmation);
 
   const results: StrategyPerformanceStats[] = [];
 
   for (const strat of strategyDefs) {
-    const stats = runSingleStrategyBacktest(strat, barsEntry, barsMacro, initialCapital);
+    const stats = runSingleStrategyBacktest(strat, barsEntry, barsMacro, initialCapital, positionSizingMode, positionSizePct);
     results.push(stats);
   }
 

@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { evaluateConfluenceDetails } from '../services/signalEngine';
 import { marketDataService } from '../services/marketDataService';
+import { getTickerConfidenceScore } from '../services/confidenceScoring';
 import { SignalAccuracyStats, SignalAlert, SignalRuleConfig, TickerQuote } from '../types/trading';
 import { formatCurrency } from '../utils/formatters';
 import { 
@@ -49,7 +50,7 @@ interface EntrySignalsTabProps {
   maxAlertsPerSession: number;
   onUpdateMaxAlerts: (cap: number) => void;
   onSelectTicker: (symbol: string) => void;
-  onOpenNewPositionWithTicker: (symbol: string, currentPrice: number) => void;
+  onOpenNewPositionWithTicker: (symbol: string, currentPrice: number, stopLossPrice?: number) => void;
   onNavigateToTab: (tab: string) => void;
   universe?: TickerQuote[];
 }
@@ -527,6 +528,24 @@ export const EntrySignalsTab: React.FC<EntrySignalsTabProps> = ({
                               </span>
                             )}
                           </button>
+                          {(() => {
+                            const conf = getTickerConfidenceScore(quote.symbol);
+                            const styles: Record<string, string> = {
+                              HIGH: 'bg-emerald-950 text-emerald-300 border-emerald-800',
+                              MEDIUM: 'bg-amber-950 text-amber-300 border-amber-800',
+                              LOW: 'bg-orange-950 text-orange-300 border-orange-800',
+                              AVOID: 'bg-rose-950 text-rose-300 border-rose-800',
+                              UNKNOWN: 'bg-slate-800 text-slate-400 border-slate-700',
+                            };
+                            return (
+                              <span
+                                title={conf.label}
+                                className={`mt-1 inline-block text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold border ${styles[conf.grade]}`}
+                              >
+                                {conf.grade === 'UNKNOWN' ? 'N/A' : `${conf.grade} (${conf.winRatePct}%)`}
+                              </span>
+                            );
+                          })()}
                         </td>
 
                         <td className="py-3 px-3 text-slate-200 font-semibold">
@@ -623,12 +642,12 @@ export const EntrySignalsTab: React.FC<EntrySignalsTabProps> = ({
                           {isBuy ? (
                             <span className="px-2 py-1 rounded bg-emerald-950 text-emerald-300 border border-emerald-700 font-bold text-[11px] inline-flex items-center gap-1 shadow-sm">
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                              {isFresh ? '7/7 TREND INCEPTION' : isRiding ? '7/7 RIDING TREND' : '7/7 BUY SIGNAL'}
+                              {isFresh ? '8/8 TREND INCEPTION' : isRiding ? '8/8 RIDING TREND' : '8/8 BUY SIGNAL'}
                             </span>
                           ) : isAlmostBuy ? (
                             <div className="flex flex-col items-center">
                               <span className="px-2 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-600 font-bold text-[11px] inline-flex items-center gap-1 shadow-sm whitespace-nowrap">
-                                <Zap className="w-3 h-3 text-amber-400" /> ALMOST BUY ({evaluation.totalPillarsPassed ?? evaluation.entryPassedCount}/7)
+                                <Zap className="w-3 h-3 text-amber-400" /> ALMOST BUY ({evaluation.totalPillarsPassed ?? evaluation.entryPassedCount}/8)
                               </span>
                               <span className="text-[9px] text-amber-400/90 font-mono mt-0.5 max-w-[140px] truncate" title={evaluation.almostBuyMissingConditions.join('; ')}>
                                 Awaiting: {evaluation.almostBuyMissingConditions[0] || '1 condition'}
@@ -653,7 +672,7 @@ export const EntrySignalsTab: React.FC<EntrySignalsTabProps> = ({
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">
-                              {evaluation.totalPillarsPassed ?? evaluation.entryPassedCount}/7 Pillars
+                              {evaluation.totalPillarsPassed ?? evaluation.entryPassedCount}/8 Pillars
                             </span>
                           )}
                         </td>
@@ -671,7 +690,7 @@ export const EntrySignalsTab: React.FC<EntrySignalsTabProps> = ({
                               <Eye className="w-3 h-3 text-emerald-400" /> Chart
                             </button>
                             <button
-                              onClick={() => onOpenNewPositionWithTicker(quote.symbol, quote.price)}
+                              onClick={() => onOpenNewPositionWithTicker(quote.symbol, quote.price, evaluation.cloudBottom > 0 ? evaluation.cloudBottom : undefined)}
                               className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors flex items-center gap-1 ${
                                 isBuy
                                   ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
@@ -780,7 +799,7 @@ export const EntrySignalsTab: React.FC<EntrySignalsTabProps> = ({
                       </button>
 
                       <button
-                        onClick={() => onOpenNewPositionWithTicker(alert.ticker, alert.triggerPrice)}
+                        onClick={() => onOpenNewPositionWithTicker(alert.ticker, alert.triggerPrice, alert.confluenceStatus?.cloudBottom && alert.confluenceStatus.cloudBottom > 0 ? alert.confluenceStatus.cloudBottom : undefined)}
                         className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1 shadow-sm ${
                           isBullish ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-rose-600 hover:bg-rose-500 text-white'
                         }`}
